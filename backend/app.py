@@ -3,6 +3,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import logging
+import uuid
+
 from backend.preprocessing import extract_frames
 from backend.inference import run_inference
 from backend.config import UPLOAD_FOLDER
@@ -19,6 +21,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app = Flask(__name__)
 CORS(app)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
 
 
 # File validation
@@ -29,38 +32,59 @@ def allowed_file(filename):
 @app.route("/predict", methods=["POST"])
 def predict():
     if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+        return jsonify({
+            "success": False,
+            "error": "No file uploaded"
+            }), 400
 
     file = request.files["file"]
 
     if file.filename == "":
-        return jsonify({"error": "No selected file"}), 400
+        return jsonify({
+            "success": False,
+            "error": "No selected file"
+            }), 400
 
     if not allowed_file(file.filename):
-        return jsonify({"error": "Invalid file format"}), 400
+        return jsonify({
+            "success": False,
+            "error": "Invalid file format"
+            }), 400
     
     logging.info(f"Received file: {file.filename}")
     
-    filename = secure_filename(file.filename)
+    filename = f"{uuid.uuid4()}_{secure_filename(file.filename)}"
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(file_path)
 
     try:
         frames = extract_frames(file_path)
-        prediction = run_inference(frames)
+        prediction, confidence = run_inference(frames)
 
         result = "Fake" if prediction == 1 else "Real"
         logging.info(f"Prediction result: {result}")
 
-        return jsonify({"prediction": result})
+        return jsonify({
+            "success": True,
+            "prediction": result,
+            "label": int(prediction),
+            "confidence": float(confidence)
+            })
 
     except Exception as e:
         logging.error(f"Inference failed: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "success": False,
+            "error": "Inference Failed"
+            }), 500
 
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
 
 def run_app():
     app.run(host="0.0.0.0", port=5000, debug=True)

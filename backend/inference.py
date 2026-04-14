@@ -43,5 +43,6 @@ def run_inference(frames_tensor):
     with torch.no_grad():
         output = model(frames_tensor)
         prediction = torch.argmax(output, dim=1).item()
+        confidence = torch.softmax(output, dim=1).max().item()
 
-    return prediction
+    return prediction, confidence
